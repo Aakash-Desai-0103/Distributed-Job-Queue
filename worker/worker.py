@@ -2,6 +2,7 @@ import socket
 import json
 import math
 import time
+import ssl
 
 class Worker:
     def __init__(self, worker_id, server_host, server_port=9999):
@@ -11,10 +12,18 @@ class Worker:
         self.socket = None
     
     def connect(self):
-        """Connect to server"""
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        """Connect to server WITH SSL"""
+        # Create SSL context
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE  # For self-signed certs
+        
+        # Create socket and wrap with SSL
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.socket = context.wrap_socket(sock, server_hostname=self.server_host)
         self.socket.connect((self.server_host, self.server_port))
-        print(f"[+] Worker {self.worker_id} connected to server {self.server_host}:{self.server_port}")
+        
+        print(f"[+] Worker {self.worker_id} connected to server {self.server_host}:{self.server_port} (SSL/TLS)")
     
     def send_message(self, message):
         """Send message and get response"""
