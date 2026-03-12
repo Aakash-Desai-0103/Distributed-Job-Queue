@@ -2,6 +2,7 @@ import socket
 import threading
 import json
 import queue
+import ssl
 
 class JobQueueServer:
     def __init__(self):
@@ -139,25 +140,38 @@ class JobQueueServer:
                 }
     
     def start(self):
-        """Start server WITHOUT SSL"""
+        """Start server WITH SSL/TLS"""
+        # Create SSL context
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain('cert.pem', 'key.pem')
+        
+        # Create regular socket
         server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         server.bind(('0.0.0.0', 9999))
         server.listen(10)
         
-        print(f"[*] Server listening on port 9999")
-        print(f"[*] Ready to accept connections")
+        print(f"[*] Server listening on port 9999 with SSL/TLS")
+        print(f"[*] Ready to accept secure connections")
         print(f"[*] Press Ctrl+C to stop")
         
         try:
             while True:
                 client_sock, address = server.accept()
-                thread = threading.Thread(
-                    target=self.handle_client, 
-                    args=(client_sock, address),
-                    daemon=True
-                )
-                thread.start()
+                
+                # Wrap socket with SSL
+                try:
+                    secure_sock = context.wrap_socket(client_sock, server_side=True)
+                    thread = threading.Thread(
+                        target=self.handle_client,
+                        args=(secure_sock, address),
+                        daemon=True
+                    )
+                    thread.start()
+                except ssl.SSLError as e:
+                    print(f"[-] SSL Error with {address}: {e}")
+                    client_sock.close()
+                    
         except KeyboardInterrupt:
             print("\n[!] Server shutting down...")
             server.close()
