@@ -3,7 +3,7 @@
 ## Team Members
 - Member 1: Job Submitter Client (macOS)
 - Member 2: Central Coordination Server (Linux)
-- Member 3: Worker Node (Windows VM)
+- Member 3: Worker Node (Windows)
 
 ## Overview
 Distributed job queue system with SSL/TLS encryption for secure communication.
