@@ -1,17 +1,16 @@
 import socket
 import threading
-import json
 import queue
 import ssl
 
 class JobQueueServer:
     def __init__(self):
-        self.pending_jobs = queue.Queue()  # Jobs waiting to be assigned
-        self.assigned_jobs = {}  # {job_id: worker_id}
-        self.completed_jobs = {}  # {job_id: result}
+        self.pending_jobs = queue.Queue()
+        self.assigned_jobs = {}
+        self.completed_jobs = {}
         self.job_counter = 0
-        self.lock = threading.Lock()  # For thread safety
-        
+        self.lock = threading.Lock()
+    
     def handle_client(self, client_socket, address):
         """Handle one client connection"""
         print(f"[+] Connected: {address}")
@@ -30,13 +29,11 @@ class JobQueueServer:
                     line, buffer = buffer.split("\n", 1)
                     if line.strip():
                         try:
-                            message = json.loads(line)
-                            response = self.route_message(message)
-                            client_socket.send((json.dumps(response) + "\n").encode())
-                        except json.JSONDecodeError as e:
-                            print(f"[ERROR] Invalid JSON: {e}")
+                            response = self.route_message(line.strip())
+                            client_socket.send((response + "\n").encode())
                         except Exception as e:
                             print(f"[ERROR] Processing message: {e}")
+                            client_socket.send(f"ERROR|{str(e)}\n".encode())
                         
         except Exception as e:
             print(f"[-] Error with {address}: {e}")
@@ -46,39 +43,67 @@ class JobQueueServer:
     
     def route_message(self, message):
         """Route message to appropriate handler"""
-        msg_type = message.get('type')
+        parts = message.split('|')
+        if not parts:
+            return "ERROR|Invalid message"
         
-        if msg_type == 'SUBMIT_JOB':
-            return self.handle_submit_job(message)
-        elif msg_type == 'REQUEST_JOB':
-            return self.handle_request_job(message)
-        elif msg_type == 'JOB_COMPLETE':
-            return self.handle_job_complete(message)
-        elif msg_type == 'GET_RESULT':
-            return self.handle_get_result(message)
+        cmd = parts[0]
+        
+        if cmd == 'SUBMIT_JOB':
+            return self.handle_submit_job(parts)
+        elif cmd == 'REQUEST_JOB':
+            return self.handle_request_job(parts)
+        elif cmd == 'COMPLETE':
+            return self.handle_job_complete(parts)
+        elif cmd == 'GETRESULT':
+            return self.handle_get_result(parts)
         else:
-            return {'status': 'error', 'message': f'Unknown type: {msg_type}'}
+            return f"ERROR|Unknown command: {cmd}"
     
-    def handle_submit_job(self, message):
-        """Add job to pending queue"""
+    def handle_submit_job(self, parts):
+        """Add job to pending queue
+        Format: SUBMIT_JOB|job_type|param=value|param=value
+        Example: SUBMIT_JOB|factorial|n=10
+        """
+        if len(parts) < 2:
+            return "ERROR|Invalid SUBMIT_JOB format"
+        
+        job_type = parts[1]
+        
+        # Parse parameters
+        data = {}
+        for i in range(2, len(parts)):
+            if '=' in parts[i]:
+                key, value = parts[i].split('=', 1)
+                # Try to convert to int if possible
+                try:
+                    data[key] = int(value)
+                except ValueError:
+                    data[key] = value
+        
         with self.lock:
             self.job_counter += 1
             job_id = f"job_{self.job_counter}"
         
         job = {
             'job_id': job_id,
-            'job_type': message['job_type'],
-            'data': message['data']
+            'job_type': job_type,
+            'data': data
         }
         
         self.pending_jobs.put(job)
-        print(f"[QUEUE] Job {job_id} added (type: {message['job_type']}, data: {message['data']})")
+        print(f"[QUEUE] Job {job_id} added (type: {job_type}, data: {data})")
         
-        return {'status': 'success', 'job_id': job_id}
+        return f"OK|{job_id}"
     
-    def handle_request_job(self, message):
-        """Assign job to worker"""
-        worker_id = message.get('worker_id', 'unknown')
+    def handle_request_job(self, parts):
+        """Assign job to worker
+        Format: REQUEST_JOB|worker_id
+        """
+        if len(parts) < 2:
+            return "ERROR|Invalid REQUEST_JOB format"
+        
+        worker_id = parts[1]
         
         try:
             job = self.pending_jobs.get(block=False)
@@ -87,60 +112,67 @@ class JobQueueServer:
                 self.assigned_jobs[job['job_id']] = worker_id
             
             print(f"[ASSIGN] Job {job['job_id']} → Worker {worker_id}")
-            return {'status': 'success', 'job': job}
+            
+            # Build response: JOB|job_id|job_type|param=value|param=value
+            response = f"JOB|{job['job_id']}|{job['job_type']}"
+            for key, value in job['data'].items():
+                response += f"|{key}={value}"
+            
+            return response
             
         except queue.Empty:
-            return {'status': 'no_jobs'}
+            return "NOJOBS"
     
-    def handle_job_complete(self, message):
-        """Store completed job result"""
-        job_id = message['job_id']
-        result = message['result']
+    def handle_job_complete(self, parts):
+        """Store completed job result
+        Format: COMPLETE|job_id|result
+        """
+        if len(parts) < 3:
+            return "ERROR|Invalid COMPLETE format"
+        
+        job_id = parts[1]
+        result = parts[2]
+        
+        # Try to convert result to int if possible
+        try:
+            result = int(result)
+        except ValueError:
+            pass
         
         with self.lock:
-            # Remove from assigned
             if job_id in self.assigned_jobs:
                 worker_id = self.assigned_jobs[job_id]
                 del self.assigned_jobs[job_id]
                 print(f"[COMPLETE] Job {job_id} completed by {worker_id}")
             
-            # Store result
             self.completed_jobs[job_id] = result
             print(f"[STORED] Result for {job_id}: {result}")
         
-        return {'status': 'success'}
+        return "OK"
     
-    def handle_get_result(self, message):
-        """Return result if available"""
-        job_id = message['job_id']
+    def handle_get_result(self, parts):
+        """Return result if available
+        Format: GETRESULT|job_id
+        """
+        if len(parts) < 2:
+            return "ERROR|Invalid GETRESULT format"
+        
+        job_id = parts[1]
         
         with self.lock:
             if job_id in self.completed_jobs:
                 result = self.completed_jobs[job_id]
                 print(f"[RESULT] Returning result for {job_id}")
-                return {
-                    'type': 'RESULT',
-                    'job_id': job_id,
-                    'status': 'completed',
-                    'result': result
-                }
+                return f"RESULT|{job_id}|completed|{result}"
             elif job_id in self.assigned_jobs:
                 print(f"[RESULT] Job {job_id} in progress")
-                return {
-                    'type': 'RESULT',
-                    'job_id': job_id,
-                    'status': 'in_progress'
-                }
+                return f"RESULT|{job_id}|in_progress"
             else:
                 print(f"[RESULT] Job {job_id} pending")
-                return {
-                    'type': 'RESULT',
-                    'job_id': job_id,
-                    'status': 'pending'
-                }
+                return f"RESULT|{job_id}|pending"
     
     def start(self):
-        """Start server WITH SSL/TLS"""
+        """Start server WITH SSL"""
         # Create SSL context
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain('cert.pem', 'key.pem')
@@ -152,6 +184,7 @@ class JobQueueServer:
         server.listen(10)
         
         print(f"[*] Server listening on port 9999 with SSL/TLS")
+        print(f"[*] Using PLAIN TEXT protocol (pipe-delimited)")
         print(f"[*] Ready to accept secure connections")
         print(f"[*] Press Ctrl+C to stop")
         
