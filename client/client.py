@@ -101,7 +101,7 @@ class JobSubmitter:
             print("[!] Connection closed")
 
 if __name__ == "__main__":
-    SERVER_IP = '100.89.185.61'
+    SERVER_IP = '10.20.255.155'
     
     client = JobSubmitter(SERVER_IP)
     client.connect()

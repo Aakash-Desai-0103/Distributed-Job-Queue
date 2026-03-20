@@ -156,7 +156,7 @@ class Worker:
                 self.socket.close()
 
 if __name__ == "__main__":
-    SERVER_IP = '100.89.185.61'
+    SERVER_IP = '10.20.255.155'
     
     worker = Worker('worker_1', SERVER_IP)
     worker.connect()
