@@ -1,3 +1,6 @@
+#!/usr/bin/env python3
+# worker/worker_crashable.py - Worker that crashes for testing
+
 import socket
 import math
 import time
@@ -5,6 +8,10 @@ import ssl
 import threading
 import os
 import sys
+
+# CRASH CONFIGURATION
+CRASH_AFTER_JOBS = 2  # Will crash after completing 2 jobs
+jobs_completed = 0
 
 class Worker:
     def __init__(self, worker_id, server_host, server_port=9999, cert_path='cert.pem'):
@@ -29,16 +36,12 @@ class Worker:
     def connect(self):
         """Connect to server WITH SSL VERIFICATION"""
         
-        # Verify certificate exists
         if not self.verify_certificate_exists():
             sys.exit(1)
         
-        # Create SSL context with VERIFICATION
         context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
         context.load_verify_locations(self.cert_path)
-        
-        # ENABLE hostname checking and certificate verification
-        context.check_hostname = False  # We're using IP, not hostname
+        context.check_hostname = False
         context.verify_mode = ssl.CERT_REQUIRED
         
         try:
@@ -46,7 +49,6 @@ class Worker:
             self.socket = context.wrap_socket(sock, server_hostname=self.server_host)
             self.socket.connect((self.server_host, self.server_port))
             
-            # Get certificate info
             cert = self.socket.getpeercert()
             
             print(f"\n{'='*60}")
@@ -58,48 +60,18 @@ class Worker:
             
             if cert:
                 subject = dict(x[0] for x in cert['subject'])
-                issuer = dict(x[0] for x in cert['issuer'])
-                print(f"[📜] Certificate Subject: {subject.get('commonName', 'N/A')}")
-                print(f"[📜] Certificate Issuer: {issuer.get('commonName', 'N/A')}")
-                print(f"[📅] Valid from: {cert['notBefore']}")
+                print(f"[📜] Certificate CN: {subject.get('commonName', 'N/A')}")
                 print(f"[📅] Valid until: {cert['notAfter']}")
-                
-                # Check expiry
-                self.check_certificate_expiry(cert)
             
             print(f"[+] Using PLAIN TEXT protocol (pipe-delimited)")
             print(f"[💓] Heartbeat enabled: {self.heartbeat_interval}s interval")
+            print(f"[💥] CRASH MODE: Will crash after {CRASH_AFTER_JOBS} jobs")
             print(f"{'='*60}\n")
             
-        except ssl.SSLError as e:
-            print(f"\n[❌] SSL VERIFICATION FAILED!")
-            print(f"[ERROR] {e}")
-            print(f"\n[INFO] Possible issues:")
-            print(f"  1. Certificate doesn't match server IP")
-            print(f"  2. Certificate is expired")
-            print(f"  3. Wrong certificate file")
-            print(f"\n[SOLUTION] Regenerate certificate with correct server IP")
-            sys.exit(1)
         except Exception as e:
             print(f"\n[❌] CONNECTION FAILED!")
             print(f"[ERROR] {e}")
             sys.exit(1)
-    
-    def check_certificate_expiry(self, cert):
-        """Check if certificate is about to expire"""
-        import datetime
-        
-        not_after = cert['notAfter']
-        # Parse date: 'Jun  1 12:00:00 2025 GMT'
-        expiry_date = datetime.datetime.strptime(not_after, '%b %d %H:%M:%S %Y %Z')
-        days_until_expiry = (expiry_date - datetime.datetime.now()).days
-        
-        if days_until_expiry < 0:
-            print(f"[⚠️] WARNING: Certificate EXPIRED {abs(days_until_expiry)} days ago!")
-        elif days_until_expiry < 30:
-            print(f"[⚠️] WARNING: Certificate expires in {days_until_expiry} days!")
-        else:
-            print(f"[✓] Certificate valid for {days_until_expiry} more days")
     
     def send_message(self, message):
         """Send message and get response"""
@@ -177,6 +149,8 @@ class Worker:
     
     def execute_job(self, job):
         """Execute the job and return result"""
+        global jobs_completed
+        
         job_id = job['job_id']
         job_type = job['job_type']
         data = job['data']
@@ -184,54 +158,48 @@ class Worker:
         print(f"[EXEC] Executing {job_id} (type: {job_type}, data: {data})")
         
         try:
-            # ORIGINAL JOB TYPES
+            # Execute based on job type
             if job_type == 'factorial':
                 n = data.get('n', 0)
                 result = math.factorial(n)
                 print(f"[RESULT] factorial({n}) = {result}")
-                return result
             
             elif job_type == 'fibonacci':
                 n = data.get('n', 0)
                 a, b = 0, 1
                 for _ in range(n):
                     a, b = b, a + b
+                result = a
                 print(f"[RESULT] fibonacci({n}) = {a}")
-                return a
             
             elif job_type == 'sleep':
                 duration = data.get('duration', 2)
                 print(f"[EXEC] Sleeping for {duration}s...")
                 time.sleep(duration)
+                result = f"Slept_{duration}s"
                 print(f"[RESULT] Slept for {duration}s")
-                return f"Slept_{duration}s"
             
             elif job_type == 'sum':
                 limit = data.get('limit', 100)
                 result = sum(range(1, limit + 1))
                 print(f"[RESULT] sum(1..{limit}) = {result}")
-                return result
             
-            # NEW JOB TYPES
             elif job_type == 'prime':
                 n = data.get('n', 2)
                 result = self.is_prime(n)
                 print(f"[RESULT] is_prime({n}) = {result}")
-                return result
             
             elif job_type == 'power':
                 x = data.get('x', 2)
                 y = data.get('y', 10)
                 result = x ** y
                 print(f"[RESULT] {x}^{y} = {result}")
-                return result
             
             elif job_type == 'gcd':
                 a = data.get('a', 48)
                 b = data.get('b', 18)
                 result = math.gcd(a, b)
                 print(f"[RESULT] gcd({a}, {b}) = {result}")
-                return result
             
             elif job_type == 'sort':
                 size = data.get('size', 1000)
@@ -241,17 +209,30 @@ class Worker:
                 sorted_arr = sorted(arr)
                 result = len(sorted_arr)
                 print(f"[RESULT] sorted {size} numbers")
-                return result
             
             elif job_type == 'matrix':
                 size = data.get('size', 10)
                 result = self.matrix_multiply(size)
                 print(f"[RESULT] matrix multiply {size}x{size}")
-                return result
             
             else:
                 print(f"[ERROR] Unknown job type: {job_type}")
                 return f"ERROR_Unknown_job_type"
+            
+            # INCREMENT JOB COUNTER AND CHECK FOR CRASH
+            jobs_completed += 1
+            print(f"[INFO] Jobs completed: {jobs_completed}/{CRASH_AFTER_JOBS}")
+            
+            if jobs_completed >= CRASH_AFTER_JOBS:
+                print(f"\n{'='*60}")
+                print(f"[💥] SIMULATED CRASH - Completed {jobs_completed} jobs")
+                print(f"[💥] This worker is now terminating to simulate failure")
+                print(f"[💥] Server should detect death and re-queue unfinished jobs")
+                print(f"{'='*60}\n")
+                time.sleep(1)  # Brief pause for message to show
+                sys.exit(1)  # SIMULATE CRASH
+            
+            return result
                 
         except Exception as e:
             print(f"[ERROR] Execution failed: {e}")
@@ -285,7 +266,7 @@ class Worker:
     def work(self):
         """Main worker loop"""
         print(f"[*] Worker {self.worker_id} ready")
-        print(f"[*] Supporting 9 job types: factorial, fibonacci, sum, sleep, prime, power, gcd, sort, matrix")
+        print(f"[*] Supporting 9 job types")
         
         heartbeat_thread = threading.Thread(
             target=self.send_heartbeat,
@@ -326,6 +307,6 @@ class Worker:
 if __name__ == "__main__":
     SERVER_IP = '100.89.185.61'
     
-    worker = Worker('worker_1', SERVER_IP, cert_path='cert.pem')
+    worker = Worker('worker_crashable', SERVER_IP, cert_path='cert.pem')
     worker.connect()
     worker.work()

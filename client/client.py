@@ -1,31 +1,81 @@
 import socket
 import time
 import ssl
+import os
+import sys
 
 class JobSubmitter:
-    def __init__(self, server_host, server_port=9999):
+    def __init__(self, server_host, server_port=9999, cert_path='cert.pem'):
         self.server_host = server_host
         self.server_port = server_port
+        self.cert_path = cert_path
         self.socket = None
     
+    def verify_certificate_exists(self):
+        """Check if certificate file exists"""
+        if not os.path.exists(self.cert_path):
+            print(f"[ERROR] Certificate not found: {self.cert_path}")
+            print(f"[INFO] Please copy cert.pem from server to client directory")
+            return False
+        
+        print(f"[✓] Certificate found: {self.cert_path}")
+        return True
+    
     def connect(self):
-        """Connect to server WITH SSL"""
-        context = ssl.create_default_context()
-        context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
+        """Connect to server WITH SSL VERIFICATION"""
         
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket = context.wrap_socket(sock, server_hostname=self.server_host)
-        self.socket.connect((self.server_host, self.server_port))
+        # Verify certificate exists
+        if not self.verify_certificate_exists():
+            sys.exit(1)
         
-        print(f"[+] Connected to server {self.server_host}:{self.server_port} (SSL/TLS)")
-        print(f"[+] Using PLAIN TEXT protocol")
+        # Create SSL context with VERIFICATION
+        context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+        context.load_verify_locations(self.cert_path)
+        
+        # ENABLE certificate verification
+        context.check_hostname = False  # Using IP, not hostname
+        context.verify_mode = ssl.CERT_REQUIRED
+        
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket = context.wrap_socket(sock, server_hostname=self.server_host)
+            self.socket.connect((self.server_host, self.server_port))
+            
+            # Get certificate info
+            cert = self.socket.getpeercert()
+            
+            print(f"\n{'='*60}")
+            print(f"[🔒] SSL CONNECTION ESTABLISHED")
+            print(f"{'='*60}")
+            print(f"[+] Connected to {self.server_host}:{self.server_port}")
+            print(f"[🔐] SSL/TLS Protocol: {self.socket.version()}")
+            print(f"[✓] Server certificate verified successfully!")
+            
+            if cert:
+                subject = dict(x[0] for x in cert['subject'])
+                print(f"[📜] Certificate CN: {subject.get('commonName', 'N/A')}")
+                print(f"[📅] Valid until: {cert['notAfter']}")
+            
+            print(f"[+] Using PLAIN TEXT protocol (pipe-delimited)")
+            print(f"{'='*60}\n")
+            
+        except ssl.SSLError as e:
+            print(f"\n[❌] SSL VERIFICATION FAILED!")
+            print(f"[ERROR] {e}")
+            print(f"\n[INFO] Possible issues:")
+            print(f"  1. Certificate doesn't match server IP")
+            print(f"  2. Certificate is expired")
+            print(f"  3. Wrong certificate file")
+            sys.exit(1)
+        except Exception as e:
+            print(f"\n[❌] CONNECTION FAILED!")
+            print(f"[ERROR] {e}")
+            sys.exit(1)
     
     def send_message(self, message):
         """Send message and get response"""
         self.socket.send((message + "\n").encode())
         
-        # Read response
         buffer = ""
         while "\n" not in buffer:
             chunk = self.socket.recv(4096).decode()
@@ -37,10 +87,7 @@ class JobSubmitter:
         return line.strip()
     
     def submit_job(self, job_type, **kwargs):
-        """Submit a job and return job_id
-        Example: submit_job('factorial', n=10)
-        """
-        # Build message: SUBMIT_JOB|job_type|param=value|param=value
+        """Submit a job and return job_id"""
         message = f"SUBMIT_JOB|{job_type}"
         for key, value in kwargs.items():
             message += f"|{key}={value}"
@@ -67,7 +114,6 @@ class JobSubmitter:
             message = f"GETRESULT|{job_id}"
             response = self.send_message(message)
             
-            # Parse response: RESULT|job_id|status|result
             parts = response.split('|')
             if parts[0] != 'RESULT' or len(parts) < 3:
                 print(f"[ERROR] Invalid response: {response}")
@@ -101,30 +147,26 @@ class JobSubmitter:
             print("[!] Connection closed")
 
 if __name__ == "__main__":
-    SERVER_IP = '10.20.255.155'
+    SERVER_IP = '100.89.185.61'
     
-    client = JobSubmitter(SERVER_IP)
+    client = JobSubmitter(SERVER_IP, cert_path='cert.pem')
     client.connect()
     
     print("\n" + "="*50)
-    print("DISTRIBUTED JOB QUEUE - CLIENT TEST (SSL + PLAIN TEXT)")
+    print("DISTRIBUTED JOB QUEUE - CLIENT TEST")
+    print("SSL/TLS VERIFIED + PLAIN TEXT PROTOCOL")
     print("="*50)
     
-    # Test 1: Single job
-    print("\n### Test 1: Single Factorial Job ###")
-    job_id = client.submit_job('factorial', n=10)
-    if job_id:
-        result = client.get_result(job_id)
-    
-    # Test 2: Multiple jobs
-    print("\n### Test 2: Multiple Jobs ###")
+    # Test jobs
+    print("\n### Test: Multiple Jobs ###")
     jobs = []
     
-    jobs.append(client.submit_job('factorial', n=5))
+    jobs.append(client.submit_job('factorial', n=10))
     jobs.append(client.submit_job('fibonacci', n=10))
     jobs.append(client.submit_job('sum', limit=100))
+    jobs.append(client.submit_job('prime', n=97))
     
-    print("\n[...] Retrieving results for all jobs...")
+    print("\n[...] Retrieving results...")
     for job_id in jobs:
         if job_id:
             result = client.get_result(job_id)
