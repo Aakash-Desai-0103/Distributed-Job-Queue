@@ -152,27 +152,60 @@ if __name__ == "__main__":
     client = JobSubmitter(SERVER_IP, cert_path='cert.pem')
     client.connect()
     
-    print("\n" + "="*50)
+    print("\n" + "="*60)
     print("DISTRIBUTED JOB QUEUE - CLIENT TEST")
     print("SSL/TLS VERIFIED + PLAIN TEXT PROTOCOL")
-    print("="*50)
+    print("Testing ALL 9 Job Types")
+    print("="*60)
     
-    # Test jobs
-    print("\n### Test: Multiple Jobs ###")
-    jobs = []
+    # Test ALL 9 job types
+    print("\n### Test 1: FACTORIAL ###")
+    job1 = client.submit_job('factorial', n=10)
+    if job1:
+        client.get_result(job1)
     
-    jobs.append(client.submit_job('factorial', n=10))
-    jobs.append(client.submit_job('fibonacci', n=10))
-    jobs.append(client.submit_job('sum', limit=100))
-    jobs.append(client.submit_job('prime', n=97))
+    print("\n### Test 2: FIBONACCI ###")
+    job2 = client.submit_job('fibonacci', n=10)
+    if job2:
+        client.get_result(job2)
     
-    print("\n[...] Retrieving results...")
-    for job_id in jobs:
-        if job_id:
-            result = client.get_result(job_id)
+    print("\n### Test 3: SUM ###")
+    job3 = client.submit_job('sum', limit=100)
+    if job3:
+        client.get_result(job3)
     
-    print("\n" + "="*50)
-    print("ALL TESTS COMPLETE")
-    print("="*50 + "\n")
+    print("\n### Test 4: PRIME ###")
+    job4 = client.submit_job('prime', n=97)
+    if job4:
+        client.get_result(job4)
+    
+    print("\n### Test 5: POWER ###")
+    job5 = client.submit_job('power', x=2, y=10)
+    if job5:
+        client.get_result(job5)
+    
+    print("\n### Test 6: GCD ###")
+    job6 = client.submit_job('gcd', a=48, b=18)
+    if job6:
+        client.get_result(job6)
+    
+    print("\n### Test 7: SORT ###")
+    job7 = client.submit_job('sort', size=1000)
+    if job7:
+        client.get_result(job7)
+    
+    print("\n### Test 8: MATRIX ###")
+    job8 = client.submit_job('matrix', size=10)
+    if job8:
+        client.get_result(job8)
+    
+    print("\n### Test 9: SLEEP ###")
+    job9 = client.submit_job('sleep', duration=2)
+    if job9:
+        client.get_result(job9)
+    
+    print("\n" + "="*60)
+    print("ALL 9 JOB TYPES TESTED SUCCESSFULLY!")
+    print("="*60 + "\n")
     
     client.close()

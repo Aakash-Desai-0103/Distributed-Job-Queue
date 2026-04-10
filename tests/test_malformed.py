@@ -217,7 +217,7 @@ class MalformedRequestTester:
             print("\n[!] Connection closed")
 
 if __name__ == "__main__":
-    SERVER_IP = '100.89.185.61'
+    SERVER_IP = '10.20.204.2'
     
     print("\n" + "="*60)
     print("MALFORMED REQUEST TESTING")

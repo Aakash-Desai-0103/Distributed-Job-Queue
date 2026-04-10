@@ -15,6 +15,7 @@ class Worker:
         self.socket = None
         self.running = True
         self.heartbeat_interval = 10
+        self.socket_lock = threading.Lock()
     
     def verify_certificate_exists(self):
         """Check if certificate file exists"""
@@ -102,42 +103,42 @@ class Worker:
             print(f"[✓] Certificate valid for {days_until_expiry} more days")
     
     def send_message(self, message):
-        """Send message and get response"""
-        self.socket.send((message + "\n").encode())
+        with self.socket_lock:
+            self.socket.send((message + "\n").encode())
         
-        buffer = ""
-        while "\n" not in buffer:
-            chunk = self.socket.recv(4096).decode()
-            if not chunk:
-                raise ConnectionError("Server closed connection")
-            buffer += chunk
+            buffer = ""
+            while "\n" not in buffer:
+                chunk = self.socket.recv(4096).decode()
+                if not chunk:
+                    raise ConnectionError("Server closed connection")
+                buffer += chunk
         
-        line, _ = buffer.split("\n", 1)
-        return line.strip()
+            line, _ = buffer.split("\n", 1)
+            return line.strip()
     
     def send_heartbeat(self):
         """Background thread to send periodic heartbeats"""
         print(f"[💓] Heartbeat thread started")
-        
+    
         while self.running:
             try:
                 time.sleep(self.heartbeat_interval)
-                
+            
                 if not self.running:
                     break
-                
+            
                 message = f"HEARTBEAT|{self.worker_id}"
                 response = self.send_message(message)
-                
+            
                 if response == "OK":
                     print(f"[💓] Heartbeat sent → Server OK")
                 else:
                     print(f"[💓] Heartbeat response: {response}")
-                    
+                
             except Exception as e:
                 print(f"[💓] Heartbeat failed: {e}")
                 time.sleep(5)
-    
+            
     def request_job(self):
         """Request next job from server"""
         message = f"REQUEST_JOB|{self.worker_id}"
