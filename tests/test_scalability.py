@@ -5,21 +5,24 @@ import socket
 import ssl
 import threading
 import time
+import json
+import sys
 
-SERVER_IP = '10.20.204.2'
+SERVER_IP = '127.0.0.1'
 SERVER_PORT = 9999
 CERT_PATH = '../client/cert.pem'
-
-MAX_CONNECTIONS = 1024  # System-safe limit
+MAX_CONNECTIONS = 1024
 
 successful_connections = 0
 failed_connections = 0
-active_sockets = []  # To keep connections alive
+active_sockets = []
 lock = threading.Lock()
 
 
 def test_connection(worker_id):
     global successful_connections, failed_connections
+
+    ssl_sock = None
 
     try:
         context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
@@ -28,27 +31,53 @@ def test_connection(worker_id):
         context.verify_mode = ssl.CERT_REQUIRED
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(5)  # Prevent hanging connections
+        sock.settimeout(5)
 
         ssl_sock = context.wrap_socket(sock, server_hostname=SERVER_IP)
         ssl_sock.connect((SERVER_IP, SERVER_PORT))
 
-        # Send heartbeat
-        ssl_sock.send(f"HEARTBEAT|scalability_test_{worker_id}\n".encode())
-        response = ssl_sock.recv(1024).decode()
+        message = {
+            "type": "HEARTBEAT",
+            "worker_id": f"scalability_test_{worker_id}"
+        }
 
-        if response.startswith("OK"):
+        ssl_sock.sendall(
+            (json.dumps(message) + "\n").encode("utf-8")
+        )
+
+        buffer = ""
+
+        while "\n" not in buffer:
+            chunk = ssl_sock.recv(4096).decode("utf-8")
+
+            if not chunk:
+                raise ConnectionError("Server closed connection")
+
+            buffer += chunk
+
+        line, _ = buffer.split("\n", 1)
+        response = json.loads(line)
+
+        if response.get("type") == "OK":
             with lock:
                 successful_connections += 1
-                active_sockets.append(ssl_sock)  # Keep connection alive
+                active_sockets.append(ssl_sock)
         else:
             with lock:
                 failed_connections += 1
+
             ssl_sock.close()
 
     except Exception as e:
         with lock:
             failed_connections += 1
+
+        if ssl_sock:
+            try:
+                ssl_sock.close()
+            except Exception:
+                pass
+
         print(f"[!] Connection {worker_id} failed: {e}")
 
 
@@ -56,20 +85,23 @@ if __name__ == "__main__":
     print("SCALABILITY TEST")
     print("=" * 60)
 
-    # Input with validation
     try:
-        num_connections = int(input("How many concurrent connections to test? "))
+        num_connections = int(
+            input("How many concurrent connections to test? ")
+        )
     except ValueError:
         print("Invalid input. Please enter a number.")
-        exit(1)
+        sys.exit(1)
 
-    # Enforce limit
     if num_connections <= 0:
         print("Number must be greater than 0.")
-        exit(1)
+        sys.exit(1)
 
     if num_connections >= MAX_CONNECTIONS:
-        print(f"[!] Limiting connections to {MAX_CONNECTIONS - 1} (system-safe limit)")
+        print(
+            f"[!] Limiting connections to "
+            f"{MAX_CONNECTIONS - 1}"
+        )
         num_connections = MAX_CONNECTIONS - 1
 
     threads = []
@@ -83,14 +115,13 @@ if __name__ == "__main__":
             args=(i,),
             daemon=True
         )
+
         threads.append(thread)
         thread.start()
 
-        # Prevent sudden burst overload
-        if i % 50 == 0:
+        if i > 0 and i % 50 == 0:
             time.sleep(0.05)
 
-    # Wait for all threads
     for thread in threads:
         thread.join()
 
@@ -103,19 +134,22 @@ if __name__ == "__main__":
     print(f"Successful: {successful_connections}")
     print(f"Failed: {failed_connections}")
     print(f"Time elapsed: {elapsed:.2f}s")
-    print(f"Connection rate: {successful_connections / elapsed:.2f} connections/sec")
+
+    if elapsed > 0:
+        rate = successful_connections / elapsed
+        print(f"Connection rate: {rate:.2f} connections/sec")
+
     print("=" * 60)
 
-    # Keep connections alive
     print("\nKeeping connections alive for 30 seconds...")
     time.sleep(30)
 
-    # Cleanup
     print("\nClosing all connections...")
+
     for sock in active_sockets:
         try:
             sock.close()
-        except:
+        except Exception:
             pass
 
     print("Test complete!")

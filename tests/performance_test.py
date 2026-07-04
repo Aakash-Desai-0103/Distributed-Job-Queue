@@ -112,29 +112,25 @@ class PerformanceTester:
             self.client.close()
 
 if __name__ == "__main__":
-    SERVER_IP = '10.20.204.2'
-    
+    SERVER_IP = '127.0.0.1'
+
     tester = PerformanceTester(SERVER_IP)
     tester.connect()
-    
-    # Run different test scenarios
+
     print("\n" + "="*60)
     print("STARTING PERFORMANCE TESTS")
     print("="*60)
-    
-    # Test 1: 50 jobs, mixed workload
+
     tester.run_test(num_jobs=50, job_mix='mixed')
     time.sleep(2)
-    
-    # Test 2: 100 jobs, compute-heavy
+
     tester.run_test(num_jobs=100, job_mix='compute')
     time.sleep(2)
-    
-    # Test 3: 200 jobs, mixed workload (stress test)
+
     tester.run_test(num_jobs=200, job_mix='mixed')
-    
+
     tester.close()
-    
+
     print("\n" + "="*60)
     print("ALL TESTS COMPLETE")
     print("Check server directory for performance_log_*.csv")
