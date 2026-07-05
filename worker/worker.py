@@ -382,12 +382,12 @@ class Worker:
             if self.socket:
                 self.socket.close()
 
-
 if __name__ == "__main__":
     SERVER_IP = '127.0.0.1'
+    WORKER_ID = sys.argv[1] if len(sys.argv) > 1 else 'worker_1'
 
     worker = Worker(
-        'worker_1',
+        WORKER_ID,
         SERVER_IP,
         cert_path='cert.pem'
     )

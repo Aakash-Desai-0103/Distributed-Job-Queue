@@ -1,28 +1,22 @@
 #!/usr/bin/env python3
-# server/server.py - Secure Distributed Job Queue Server
 
 import socket
 import threading
-import queue
 import ssl
 import time
 import csv
 import os
 import json
 from datetime import datetime
+from database import JobDatabase
 
 
 class JobQueueServer:
     def __init__(self):
-        self.pending_jobs = queue.Queue()
-        self.assigned_jobs = {}
-        self.completed_jobs = {}
-        self.job_details = {}
-        self.job_counter = 0
+        self.db = JobDatabase()
         self.lock = threading.Lock()
 
         self.worker_heartbeats = {}
-        self.worker_jobs = {}
         self.heartbeat_timeout = 30
         self.heartbeat_check_interval = 5
 
@@ -31,14 +25,59 @@ class JobQueueServer:
             f"performance_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         )
 
+        recovered = self.db.recover_in_progress_jobs()
+
+        if recovered:
+            print(
+                f"[RECOVERY] Re-queued {recovered} "
+                "in-progress jobs from previous server run"
+            )
+
+    def handle_secure_connection(
+        self,
+        client_sock,
+        address,
+        context
+    ):
+        try:
+            secure_sock = context.wrap_socket(
+                client_sock,
+                server_side=True
+            )
+
+            self.handle_client(
+                secure_sock,
+                address
+            )
+
+        except ssl.SSLError as e:
+            print(
+                f"[-] SSL Error with {address}: {e}"
+            )
+
+            try:
+                client_sock.close()
+            except Exception:
+                pass
+
+        except Exception as e:
+            print(
+                f"[-] Connection error with {address}: {e}"
+            )
+
+            try:
+                client_sock.close()
+            except Exception:
+                pass
+
     def handle_client(self, client_socket, address):
-        """Handle one persistent SSL/TLS connection using newline-delimited JSON"""
         print(f"[+] Connected: {address}")
         buffer = ""
 
         try:
             while True:
                 data = client_socket.recv(4096)
+
                 if not data:
                     break
 
@@ -66,10 +105,16 @@ class JobQueueServer:
                         )
 
                     except Exception as e:
-                        print(f"[ERROR] Processing message from {address}: {e}")
+                        print(
+                            f"[ERROR] Processing message "
+                            f"from {address}: {e}"
+                        )
                         response = self.error_response(str(e))
 
-                    response_data = (json.dumps(response) + "\n").encode("utf-8")
+                    response_data = (
+                        json.dumps(response) + "\n"
+                    ).encode("utf-8")
+
                     client_socket.sendall(response_data)
 
         except Exception as e:
@@ -101,11 +146,12 @@ class JobQueueServer:
         return response
 
     def route_message(self, message):
-        """Route incoming JSON message to its handler"""
         message_type = message.get("type")
 
         if not message_type:
-            return self.error_response("Missing required field: type")
+            return self.error_response(
+                "Missing required field: type"
+            )
 
         handlers = {
             "SUBMIT_JOB": self.handle_submit_job,
@@ -125,7 +171,6 @@ class JobQueueServer:
         )
 
     def handle_submit_job(self, message):
-        """Add a submitted job to the pending queue"""
         job_type = message.get("job_type")
         parameters = message.get("parameters", {})
 
@@ -146,7 +191,8 @@ class JobQueueServer:
 
         if not job_type.replace("_", "").isalnum():
             return self.error_response(
-                "Invalid job type name (alphanumeric and underscore only)"
+                "Invalid job type name "
+                "(alphanumeric and underscore only)"
             )
 
         if not isinstance(parameters, dict):
@@ -154,27 +200,10 @@ class JobQueueServer:
                 "parameters must be a JSON object"
             )
 
-        with self.lock:
-            self.job_counter += 1
-            job_id = f"job_{self.job_counter}"
-
-        submit_time = time.time()
-
-        job = {
-            "job_id": job_id,
-            "job_type": job_type,
-            "data": parameters,
-            "submit_time": submit_time
-        }
-
-        with self.lock:
-            self.job_details[job_id] = {
-                "job_type": job_type,
-                "data": parameters,
-                "submit_time": submit_time
-            }
-
-        self.pending_jobs.put(job)
+        job_id = self.db.create_job(
+            job_type,
+            parameters
+        )
 
         print(
             f"[QUEUE] Job {job_id} added "
@@ -187,7 +216,6 @@ class JobQueueServer:
         )
 
     def handle_request_job(self, message):
-        """Assign a pending job to a requesting worker"""
         worker_id = message.get("worker_id")
 
         if not worker_id:
@@ -200,42 +228,27 @@ class JobQueueServer:
                 "worker_id must be a string"
             )
 
-        try:
-            job = self.pending_jobs.get(block=False)
-            assign_time = time.time()
+        job = self.db.assign_next_job(worker_id)
 
-            with self.lock:
-                self.assigned_jobs[job["job_id"]] = {
-                    "worker_id": worker_id,
-                    "assign_time": assign_time,
-                    "submit_time": job.get("submit_time", assign_time),
-                    "job_type": job["job_type"]
-                }
-
-                if worker_id not in self.worker_jobs:
-                    self.worker_jobs[worker_id] = []
-
-                self.worker_jobs[worker_id].append(job["job_id"])
-
-            print(
-                f"[ASSIGN] Job {job['job_id']} → Worker {worker_id}"
-            )
-
-            return {
-                "type": "JOB",
-                "job_id": job["job_id"],
-                "job_type": job["job_type"],
-                "parameters": job["data"]
-            }
-
-        except queue.Empty:
+        if job is None:
             return {
                 "type": "NOJOBS",
                 "message": "No jobs currently available"
             }
 
+        print(
+            f"[ASSIGN] Job {job['job_id']} "
+            f"→ Worker {worker_id}"
+        )
+
+        return {
+            "type": "JOB",
+            "job_id": job["job_id"],
+            "job_type": job["job_type"],
+            "parameters": job["parameters"]
+        }
+
     def handle_job_complete(self, message):
-        """Record job completion and performance metrics"""
         job_id = message.get("job_id")
         reporting_worker = message.get("worker_id")
 
@@ -244,69 +257,81 @@ class JobQueueServer:
                 "Missing required field: job_id"
             )
 
+        if not reporting_worker:
+            return self.error_response(
+                "Missing required field: worker_id"
+            )
+
         if "result" not in message:
             return self.error_response(
                 "Missing required field: result"
             )
 
         result = message["result"]
-        complete_time = time.time()
+
+        job = self.db.get_job(job_id)
+
+        if job is None:
+            return self.error_response(
+                f"Job {job_id} not found"
+            )
+
+        if job["status"] != "in_progress":
+            return self.error_response(
+                f"Job {job_id} is not in progress"
+            )
+
+        if job["worker_id"] != reporting_worker:
+            return self.error_response(
+                f"Job {job_id} is assigned to "
+                f"{job['worker_id']}, not {reporting_worker}"
+            )
+
+        success = self.db.complete_job(
+            job_id,
+            reporting_worker,
+            result
+        )
+
+        if not success:
+            return self.error_response(
+                f"Unable to complete job {job_id}"
+            )
+
+        completed_job = self.db.get_job(job_id)
+
+        submit_time = completed_job["submit_time"]
+        assign_time = completed_job["assign_time"]
+        complete_time = completed_job["complete_time"]
+
+        queue_wait = assign_time - submit_time
+        execution_time = complete_time - assign_time
+        total_time = complete_time - submit_time
+
+        perf_data = {
+            "job_id": job_id,
+            "job_type": completed_job["job_type"],
+            "worker_id": reporting_worker,
+            "submit_time": submit_time,
+            "assign_time": assign_time,
+            "complete_time": complete_time,
+            "queue_wait": queue_wait,
+            "execution_time": execution_time,
+            "total_time": total_time,
+            "result": result
+        }
 
         with self.lock:
-            if job_id in self.assigned_jobs:
-                job_info = self.assigned_jobs[job_id]
-                worker_id = job_info["worker_id"]
+            self.performance_log.append(perf_data)
 
-                if (
-                    reporting_worker is not None
-                    and reporting_worker != worker_id
-                ):
-                    return self.error_response(
-                        f"Job {job_id} is assigned to "
-                        f"{worker_id}, not {reporting_worker}"
-                    )
+        self.save_performance_metric(perf_data)
 
-                submit_time = job_info["submit_time"]
-                assign_time = job_info["assign_time"]
-                job_type = job_info["job_type"]
-
-                queue_wait = assign_time - submit_time
-                execution_time = complete_time - assign_time
-                total_time = complete_time - submit_time
-
-                perf_data = {
-                    "job_id": job_id,
-                    "job_type": job_type,
-                    "worker_id": worker_id,
-                    "submit_time": submit_time,
-                    "assign_time": assign_time,
-                    "complete_time": complete_time,
-                    "queue_wait": queue_wait,
-                    "execution_time": execution_time,
-                    "total_time": total_time,
-                    "result": result
-                }
-
-                self.performance_log.append(perf_data)
-                self.save_performance_metric(perf_data)
-
-                print(
-                    f"[COMPLETE] Job {job_id} by {worker_id} | "
-                    f"Queue: {queue_wait:.3f}s | "
-                    f"Exec: {execution_time:.3f}s | "
-                    f"Total: {total_time:.3f}s"
-                )
-
-                del self.assigned_jobs[job_id]
-
-                if (
-                    worker_id in self.worker_jobs
-                    and job_id in self.worker_jobs[worker_id]
-                ):
-                    self.worker_jobs[worker_id].remove(job_id)
-
-            self.completed_jobs[job_id] = result
-            self.job_details.pop(job_id, None)
+        print(
+            f"[COMPLETE] Job {job_id} by {reporting_worker} | "
+            f"Queue: {queue_wait:.3f}s | "
+            f"Exec: {execution_time:.3f}s | "
+            f"Total: {total_time:.3f}s"
+        )
 
         return self.ok_response(
             "Job completion recorded",
@@ -314,9 +339,6 @@ class JobQueueServer:
         )
 
     def save_performance_metric(self, perf_data):
-        """Append completed job performance data to CSV"""
-        file_exists = os.path.isfile(self.log_file)
-
         fieldnames = [
             "job_id",
             "job_type",
@@ -330,16 +352,21 @@ class JobQueueServer:
             "result"
         ]
 
-        with open(self.log_file, "a", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=fieldnames)
+        with self.lock:
+            file_exists = os.path.isfile(self.log_file)
 
-            if not file_exists:
-                writer.writeheader()
+            with open(self.log_file, "a", newline="") as f:
+                writer = csv.DictWriter(
+                    f,
+                    fieldnames=fieldnames
+                )
 
-            writer.writerow(perf_data)
+                if not file_exists:
+                    writer.writeheader()
+
+                writer.writerow(perf_data)
 
     def handle_get_result(self, message):
-        """Return current job status or completed result"""
         job_id = message.get("job_id")
 
         if not job_id:
@@ -347,37 +374,27 @@ class JobQueueServer:
                 "Missing required field: job_id"
             )
 
-        with self.lock:
-            if job_id in self.completed_jobs:
-                return {
-                    "type": "RESULT",
-                    "job_id": job_id,
-                    "status": "completed",
-                    "result": self.completed_jobs[job_id]
-                }
+        job = self.db.get_job(job_id)
 
-            if job_id in self.assigned_jobs:
-                return {
-                    "type": "RESULT",
-                    "job_id": job_id,
-                    "status": "in_progress"
-                }
-
-            if job_id in self.job_details:
-                return {
-                    "type": "RESULT",
-                    "job_id": job_id,
-                    "status": "pending"
-                }
-
+        if job is None:
             return {
                 "type": "RESULT",
                 "job_id": job_id,
                 "status": "not_found"
             }
 
+        response = {
+            "type": "RESULT",
+            "job_id": job_id,
+            "status": job["status"]
+        }
+
+        if job["status"] == "completed":
+            response["result"] = job["result"]
+
+        return response
+
     def handle_heartbeat(self, message):
-        """Update worker heartbeat timestamp"""
         worker_id = message.get("worker_id")
 
         if not worker_id:
@@ -395,11 +412,11 @@ class JobQueueServer:
         )
 
     def monitor_worker_health(self):
-        """Detect workers that stop sending heartbeats"""
         print("[MONITOR] Worker health monitoring started")
 
         while True:
             time.sleep(self.heartbeat_check_interval)
+
             current_time = time.time()
             dead_workers = []
 
@@ -414,79 +431,85 @@ class JobQueueServer:
                             f"[💀] Worker {worker_id} DEAD "
                             f"(no heartbeat for {elapsed:.1f}s)"
                         )
+
                         dead_workers.append(worker_id)
 
             for worker_id in dead_workers:
                 self.handle_dead_worker(worker_id)
 
     def handle_dead_worker(self, worker_id):
-        """Re-queue unfinished jobs assigned to a dead worker"""
         with self.lock:
             self.worker_heartbeats.pop(worker_id, None)
 
-            jobs_to_requeue = []
+        requeued_jobs = self.db.requeue_worker_jobs(
+            worker_id
+        )
 
-            for job_id, job_info in list(self.assigned_jobs.items()):
-                if job_info["worker_id"] == worker_id:
-                    jobs_to_requeue.append(job_id)
-                    del self.assigned_jobs[job_id]
-
-            self.worker_jobs.pop(worker_id, None)
-
-            reconstructed_jobs = []
-
-            for job_id in jobs_to_requeue:
-                if job_id in self.job_details:
-                    details = self.job_details[job_id]
-
-                    reconstructed_jobs.append({
-                        "job_id": job_id,
-                        "job_type": details["job_type"],
-                        "data": details["data"],
-                        "submit_time": details["submit_time"]
-                    })
-
-        if jobs_to_requeue:
+        if requeued_jobs:
             print(f"\n{'='*60}")
-            print(f"[💀] WORKER FAILURE DETECTED: {worker_id}")
+            print(
+                f"[💀] WORKER FAILURE DETECTED: "
+                f"{worker_id}"
+            )
+
             print(
                 f"[RE-QUEUE] Re-queuing "
-                f"{len(jobs_to_requeue)} jobs from dead worker"
+                f"{len(requeued_jobs)} jobs from dead worker"
             )
+
             print("="*60)
 
-            for job in reconstructed_jobs:
-                self.pending_jobs.put(job)
-                print(
-                    f"[RE-QUEUE] ✓ Job {job['job_id']} "
-                    f"({job['job_type']}) back in queue"
-                )
+            for job_id in requeued_jobs:
+                job = self.db.get_job(job_id)
+
+                if job:
+                    print(
+                        f"[RE-QUEUE] ✓ Job {job_id} "
+                        f"({job['job_type']}) back in queue"
+                    )
 
             print(
                 f"[RE-QUEUE] Successfully re-queued "
-                f"{len(reconstructed_jobs)}/{len(jobs_to_requeue)} jobs"
+                f"{len(requeued_jobs)} jobs"
             )
+
             print("="*60 + "\n")
 
         else:
             print(
-                f"[CLEANUP] Dead worker {worker_id} had no pending jobs"
+                f"[CLEANUP] Dead worker {worker_id} "
+                "had no in-progress jobs"
             )
 
     def start(self):
-        """Start the TLS server and heartbeat monitor"""
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain("cert.pem", "key.pem")
+        context = ssl.SSLContext(
+            ssl.PROTOCOL_TLS_SERVER
+        )
 
-        server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        context.load_cert_chain(
+            "cert.pem",
+            "key.pem"
+        )
+
+        server = socket.socket(
+            socket.AF_INET,
+            socket.SOCK_STREAM
+        )
+
+        server.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_REUSEADDR,
+            1
+        )
+
         server.bind(("0.0.0.0", 9999))
-        server.listen(10)
+        server.listen(512)
 
         monitor_thread = threading.Thread(
             target=self.monitor_worker_health,
             daemon=True
         )
+
         monitor_thread.start()
 
         print(f"\n{'='*60}")
@@ -494,11 +517,14 @@ class JobQueueServer:
         print("="*60)
         print("[*] Server listening on port 9999 with SSL/TLS")
         print("[*] Protocol: Newline-delimited JSON")
+        print("[*] Persistent storage: SQLite")
         print(
             f"[*] Heartbeat monitoring: ENABLED "
             f"(timeout: {self.heartbeat_timeout}s)"
         )
         print(f"[*] Performance logging: {self.log_file}")
+        print("[*] Connection backlog: 512")
+        print("[*] Concurrent TLS handshakes: ENABLED")
         print("[*] Ready to accept secure connections")
         print("[*] Press Ctrl+C to stop")
         print("="*60 + "\n")
@@ -507,27 +533,31 @@ class JobQueueServer:
             while True:
                 client_sock, address = server.accept()
 
-                try:
-                    secure_sock = context.wrap_socket(
+                thread = threading.Thread(
+                    target=self.handle_secure_connection,
+                    args=(
                         client_sock,
-                        server_side=True
-                    )
+                        address,
+                        context
+                    ),
+                    daemon=True
+                )
 
-                    thread = threading.Thread(
-                        target=self.handle_client,
-                        args=(secure_sock, address),
-                        daemon=True
-                    )
-                    thread.start()
-
-                except ssl.SSLError as e:
-                    print(f"[-] SSL Error with {address}: {e}")
-                    client_sock.close()
+                thread.start()
 
         except KeyboardInterrupt:
             print("\n[!] Server shutting down...")
-            print(f"[!] Performance log saved: {self.log_file}")
-            print(f"[!] Total jobs submitted: {self.job_counter}")
+
+            statistics = self.db.get_statistics()
+
+            print(
+                f"[!] Performance log saved: "
+                f"{self.log_file}"
+            )
+
+            print(
+                f"[!] Database statistics: {statistics}"
+            )
 
         finally:
             server.close()

@@ -30,8 +30,11 @@ worker_distribution.png
 # SQLite database files
 # ============================================
 *.db
+*.db-journal
 *.db-shm
 *.db-wal
+*.sqlite
+*.sqlite3
 
 
 # ============================================
