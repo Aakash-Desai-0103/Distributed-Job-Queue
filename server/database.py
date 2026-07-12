@@ -28,6 +28,9 @@ class JobDatabase:
                     job_type TEXT NOT NULL,
                     parameters TEXT NOT NULL,
 
+                    priority INTEGER NOT NULL DEFAULT 3
+                        CHECK (priority BETWEEN 1 AND 5),
+
                     status TEXT NOT NULL DEFAULT 'pending'
                         CHECK (
                             status IN (
@@ -58,20 +61,27 @@ class JobDatabase:
                 ON jobs(worker_id)
             """)
 
-    def create_job(self, job_type, parameters):
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_jobs_priority
+                ON jobs(priority)
+            """)
+
+    def create_job(self, job_type, parameters, priority=3):
         with self.lock:
             with self.connect() as conn:
                 cursor = conn.execute("""
                     INSERT INTO jobs (
                         job_type,
                         parameters,
+                        priority,
                         status,
                         submit_time
                     )
-                    VALUES (?, ?, 'pending', ?)
+                    VALUES (?, ?, ?, 'pending', ?)
                 """, (
                     job_type,
                     json.dumps(parameters),
+                    priority,
                     time.time()
                 ))
 
@@ -98,7 +108,8 @@ class JobDatabase:
                     SELECT *
                     FROM jobs
                     WHERE status = 'pending'
-                    ORDER BY id ASC
+                    ORDER BY priority DESC,
+                             id ASC
                     LIMIT 1
                 """).fetchone()
 
@@ -125,7 +136,8 @@ class JobDatabase:
                 return {
                     "job_id": row["job_id"],
                     "job_type": row["job_type"],
-                    "parameters": json.loads(row["parameters"])
+                    "parameters": json.loads(row["parameters"]),
+                    "priority": row["priority"]
                 }
 
     def complete_job(self, job_id, worker_id, result):
@@ -171,6 +183,7 @@ class JobDatabase:
                 "job_id": row["job_id"],
                 "job_type": row["job_type"],
                 "parameters": json.loads(row["parameters"]),
+                "priority": row["priority"],
                 "status": row["status"],
                 "worker_id": row["worker_id"],
                 "result": result,

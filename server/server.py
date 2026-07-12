@@ -173,6 +173,7 @@ class JobQueueServer:
     def handle_submit_job(self, message):
         job_type = message.get("job_type")
         parameters = message.get("parameters", {})
+        priority = message.get("priority", 3)
 
         if not job_type:
             return self.error_response(
@@ -200,13 +201,26 @@ class JobQueueServer:
                 "parameters must be a JSON object"
             )
 
+        if not isinstance(priority, int):
+            return self.error_response(
+                "priority must be an integer"
+            )
+
+        if priority < 1 or priority > 5:
+            return self.error_response(
+                "priority must be between 1 and 5"
+            )
+
         job_id = self.db.create_job(
             job_type,
-            parameters
+            parameters,
+            priority
         )
 
         print(
-            f"[QUEUE] Job {job_id} added "
+            f"[QUEUE] Job {job_id} "
+            f"(Priority {priority}) "
+            f"added "
             f"(type: {job_type}, data: {parameters})"
         )
 
@@ -214,7 +228,6 @@ class JobQueueServer:
             "Job submitted successfully",
             job_id
         )
-
     def handle_request_job(self, message):
         worker_id = message.get("worker_id")
 
@@ -238,6 +251,7 @@ class JobQueueServer:
 
         print(
             f"[ASSIGN] Job {job['job_id']} "
+            f"(Priority {job['priority']}) "
             f"→ Worker {worker_id}"
         )
 
@@ -245,7 +259,8 @@ class JobQueueServer:
             "type": "JOB",
             "job_id": job["job_id"],
             "job_type": job["job_type"],
-            "parameters": job["parameters"]
+            "parameters": job["parameters"],
+            "priority": job["priority"]
         }
 
     def handle_job_complete(self, message):

@@ -93,11 +93,13 @@ class JobSubmitter:
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON response from server: {e}")
 
-    def submit_job(self, job_type, **kwargs):
+    def submit_job(self, job_type, priority=3, **kwargs):
         """Submit a job and return job_id"""
+
         message = {
             "type": "SUBMIT_JOB",
             "job_type": job_type,
+            "priority": priority,
             "parameters": kwargs
         }
 
@@ -105,13 +107,20 @@ class JobSubmitter:
 
         if response.get("type") == "OK":
             job_id = response.get("job_id")
+
             print(
                 f"[✓] Job submitted: {job_id} "
+                f"(Priority {priority}) "
                 f"(type: {job_type}, params: {kwargs})"
             )
+
             return job_id
 
-        print(f"[✗] Error: {response.get('message', response)}")
+        print(
+            f"[✗] Error: "
+            f"{response.get('message', response)}"
+        )
+
         return None
 
     def get_result(self, job_id, max_wait=30, poll_interval=2):
