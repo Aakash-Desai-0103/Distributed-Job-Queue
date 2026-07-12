@@ -1,69 +1,140 @@
 # 🚀 Secure Distributed Job Queue System
 
-A fault-tolerant distributed job processing system built using **Python**, **TCP Sockets**, and **SSL/TLS**. The system supports secure communication, concurrent workers, heartbeat monitoring, automatic job re-scheduling, performance analytics, and scalability testing.
+A secure, fault-tolerant distributed job processing system built using **Python**, **TCP Sockets**, **SSL/TLS**, **SQLite**, and **JSON**. The system supports persistent job storage, priority scheduling, concurrent workers, automatic failure recovery, heartbeat monitoring, performance analytics, and scalability testing.
 
 ---
 
 ## ✨ Key Features
 
-* 🔒 SSL/TLS encrypted communication
-* 🧵 Multi-threaded coordination server
-* ⚡ Asynchronous job execution
-* 👷 Multiple worker nodes
-* ❤️ Heartbeat-based worker monitoring
-* 🔄 Automatic job re-scheduling on worker failure
-* 📊 Performance logging & analytics
-* 📈 Throughput and scalability testing
-* 🛡️ Robust malformed request handling
-* 🔍 Detailed observability and metrics collection
+- 🔒 SSL/TLS encrypted communication
+- 📦 Newline-delimited JSON messaging protocol
+- 💾 SQLite-backed persistent job storage
+- ⭐ Priority-based job scheduling (1–5)
+- 🧵 Multi-threaded coordination server
+- 👷 Distributed worker pool
+- ❤️ Heartbeat-based worker monitoring
+- 🔄 Automatic job re-scheduling on worker failure
+- 🔁 Server restart recovery
+- 📊 Performance logging & analytics
+- 📈 Concurrency and scalability testing
+- 🛡️ Robust malformed request handling
 
 ---
 
 ## 🏗️ System Architecture
 
 ```text
-                    SUBMIT_JOB
-Client --------------------------------→ Server
-                                           │
-                                           │
-                                           ▼
-                                    Pending Queue
-                                           │
-                                           │
-                                    REQUEST_JOB
-                                           │
-                                           ▼
-                                      Worker Pool
-                                  ┌─────────────┐
-                                  │ Worker 1    │
-                                  │ Worker 2    │
-                                  │ Worker N    │
-                                  └─────────────┘
-                                           │
-                                           ▼
-                                      COMPLETE
-                                           │
-                                           ▼
-                                        Server
-                                           │
-                                           ▼
-                                     GETRESULT
-                                           │
-                                           ▼
-                                        Client
+                    SUBMIT_JOB (JSON)
+                           │
+                           ▼
+                    ┌──────────────────┐
+                    │      Client      │
+                    └────────┬─────────┘
+                             │
+                             ▼
+        ┌──────────────────────────────────────┐
+        │     Coordination Server (SSL/TLS)    │
+        │      Multi-threaded Scheduler        │
+        └────────────────┬─────────────────────┘
+                         │
+                         ▼
+              ┌──────────────────────┐
+              │ SQLite Job Database  │
+              │                      │
+              │ Pending              │
+              │ In Progress          │
+              │ Completed            │
+              └──────────┬───────────┘
+                         │
+                  REQUEST_JOB
+                         │
+                         ▼
+              ┌──────────────────────┐
+              │     Worker Pool      │
+              │                      │
+              │ Worker 1             │
+              │ Worker 2             │
+              │ Worker N             │
+              └──────────┬───────────┘
+                         │
+                    COMPLETE (JSON)
+                         │
+                         ▼
+                    SQLite Update
+                         │
+                         ▼
+                    GETRESULT
+                         │
+                         ▼
+                       Client
 ```
 
-### Design Highlights
+---
 
-✅ Pull-Based Scheduling
+## 🧠 Distributed Systems Concepts
 
-✅ Thread-Safe Job Management
+This project demonstrates:
 
-✅ Distributed Worker Pool
+- Client-Server Architecture
+- Pull-Based Scheduling
+- Distributed Worker Pool
+- Persistent Job Queue
+- Priority Scheduling
+- Thread-Safe Scheduling
+- Heartbeat Monitoring
+- Failure Detection
+- Automatic Job Recovery
+- Concurrent Processing
+- Secure Communication
+- Performance Monitoring
+- Scalability Testing
+- Defensive Programming
 
-✅ Fault Tolerant Execution
+---
 
-✅ Secure Communication Layer
+## 💾 Persistent Job Storage
+
+Unlike an in-memory queue, all jobs are stored inside a SQLite database.
+
+Each job stores:
+
+- Job ID
+- Job Type
+- Parameters (JSON)
+- Priority
+- Status
+- Assigned Worker
+- Result
+- Submit Time
+- Assign Time
+- Completion Time
+- Retry Count
+
+The database enables:
+
+- Server restart recovery
+- Worker failure recovery
+- Persistent job history
+- Reliable scheduling
+
+---
+
+## ⭐ Priority Scheduling
+
+The scheduler supports priorities from **1–5**.
+
+| Priority | Description |
+|----------|-------------|
+| 5 | Critical |
+| 4 | High |
+| 3 | Normal (Default) |
+| 2 | Low |
+| 1 | Background |
+
+Scheduling policy:
+
+1. Higher priority jobs execute first.
+2. Jobs with equal priority follow FIFO ordering.
 
 ---
 
@@ -82,9 +153,6 @@ Dead Worker Detection
 Identify Assigned Jobs
       │
       ▼
-Reconstruct Job Details
-      │
-      ▼
 Re-Queue Jobs
       │
       ▼
@@ -94,24 +162,7 @@ Healthy Workers Pick Up Jobs
 Successful Completion
 ```
 
----
-
-## 🧠 Distributed Systems Concepts
-
-This project demonstrates:
-
-* Client-Server Architecture
-* Worker Pool Design
-* Pull-Based Scheduling
-* Heartbeat Monitoring
-* Failure Detection
-* Fault Tolerance
-* Job Re-Scheduling
-* Secure Communication
-* Concurrent Processing
-* Performance Observability
-* Scalability Testing
-* Defensive Programming
+The server also automatically restores unfinished jobs after a restart.
 
 ---
 
@@ -119,73 +170,95 @@ This project demonstrates:
 
 All communication between clients, workers, and the server is protected using:
 
-* SSL/TLS Encryption
-* Certificate-Based Verification
-* Secure Socket Communication
-* Server Identity Validation
+- SSL/TLS Encryption
+- Certificate-Based Authentication
+- Secure TCP Socket Communication
+- Server Identity Verification
 
 ---
 
 ## ⚙️ Supported Job Types
 
-| Job Type  | Description                  |
-| --------- | ---------------------------- |
-| Factorial | Compute n!                   |
+| Job Type | Description |
+|----------|-------------|
+| Factorial | Compute n! |
 | Fibonacci | Compute nth Fibonacci number |
-| Sum       | Summation workload           |
-| Prime     | Prime number verification    |
-| Power     | Exponentiation               |
-| GCD       | Greatest Common Divisor      |
-| Sort      | Sorting workload             |
-| Matrix    | Matrix computation workload  |
-| Sleep     | Long-running task simulation |
+| Sum | Summation workload |
+| Prime | Prime number verification |
+| Power | Exponentiation |
+| GCD | Greatest Common Divisor |
+| Sort | Sorting workload |
+| Matrix | Matrix computation workload |
+| Sleep | Long-running task simulation |
 
 ---
 
-## 📡 Communication Protocol
+## 📡 JSON Communication Protocol
 
 ### Submit Job
 
-```text
-SUBMIT_JOB|factorial|n=10
+```json
+{
+  "type": "SUBMIT_JOB",
+  "job_type": "factorial",
+  "priority": 5,
+  "parameters": {
+    "n": 10
+  }
+}
 ```
 
-### Request Work
+### Request Job
 
-```text
-REQUEST_JOB|worker_1
+```json
+{
+  "type": "REQUEST_JOB",
+  "worker_id": "worker_1"
+}
 ```
 
 ### Complete Job
 
-```text
-COMPLETE|job_1|3628800
+```json
+{
+  "type": "COMPLETE",
+  "job_id": "job_15",
+  "worker_id": "worker_1",
+  "result": 3628800
+}
 ```
 
-### Retrieve Result
+### Get Result
 
-```text
-GETRESULT|job_1
+```json
+{
+  "type": "GETRESULT",
+  "job_id": "job_15"
+}
 ```
 
 ### Heartbeat
 
-```text
-HEARTBEAT|worker_1
+```json
+{
+  "type": "HEARTBEAT",
+  "worker_id": "worker_1"
+}
 ```
 
 ---
 
 ## 📊 Performance Metrics
 
-The system automatically records:
+The server automatically records:
 
-* Queue Wait Time
-* Execution Time
-* End-to-End Latency
-* Worker Utilization
-* Throughput
-* Job Distribution Statistics
+- Queue Wait Time
+- Execution Time
+- End-to-End Response Time
+- Worker Utilization
+- Throughput
+- Job Distribution
+- Completion Statistics
 
 Performance data is exported to CSV and visualized using Matplotlib.
 
@@ -193,13 +266,24 @@ Performance data is exported to CSV and visualized using Matplotlib.
 
 ## 🧪 Testing Suite
 
-### Performance Benchmarking
+### Client Integration Test
+
+```bash
+cd client
+python3 client.py
+```
+
+Runs all supported job types through the complete system.
+
+---
+
+### Performance Benchmark
 
 ```bash
 python3 tests/performance_test.py
 ```
 
-Measures throughput and workload handling.
+Measures throughput under different workloads.
 
 ---
 
@@ -209,37 +293,61 @@ Measures throughput and workload handling.
 python3 tests/analyze_performance.py
 ```
 
-Generates statistics and visualizations.
+Generates graphs and performance statistics.
 
 ---
 
-### Scalability Testing
+### Concurrent Submission Test
+
+```bash
+python3 tests/test_concurrency.py
+```
+
+Verifies thread-safe concurrent job submissions.
+
+---
+
+### Scalability Test
 
 ```bash
 python3 tests/test_scalability.py
 ```
 
-Evaluates concurrent connection capacity.
+Stress-tests concurrent SSL/TLS connections.
 
 ---
 
-### Error Handling Validation
+### Priority Scheduling Test
+
+```bash
+python3 tests/test_priority.py
+```
+
+Verifies:
+
+- Priority ordering
+- FIFO within equal priorities
+- Scheduler correctness
+
+---
+
+### Error Handling Test
 
 ```bash
 python3 tests/test_malformed.py
 ```
 
-Tests robustness against malformed requests.
+Validates robustness against malformed requests.
 
 ---
 
-### Fault Tolerance Demonstration
+### Fault Tolerance Demo
 
 ```bash
 python3 client/demo_rescheduling.py
 ```
 
-Demonstrates automatic job recovery and re-scheduling.
+Demonstrates automatic worker failure detection and job recovery.
 
 ---
 
@@ -253,6 +361,8 @@ chmod +x generate_cert.sh
 ./generate_cert.sh
 ```
 
+---
+
 ### Start Server
 
 ```bash
@@ -260,12 +370,18 @@ cd server
 python3 server.py
 ```
 
+---
+
 ### Start Worker(s)
 
 ```bash
 cd worker
 python3 worker.py
 ```
+
+Start multiple workers by opening multiple terminals.
+
+---
 
 ### Start Client
 
@@ -276,22 +392,49 @@ python3 client.py
 
 ---
 
+## 🛠️ Technologies Used
+
+- Python 3
+- SQLite
+- TCP Sockets
+- SSL/TLS
+- JSON
+- Threading
+- OpenSSL
+- Pandas
+- Matplotlib
+
+---
+
 ## 📈 Future Improvements
 
-* Persistent Job Storage (SQLite/PostgreSQL)
-* Priority-Based Scheduling
-* Web Monitoring Dashboard
-* Worker Auto-Reconnection
-* Distributed Server Replication
-* Advanced Load Balancing
+- 🌐 Web Monitoring Dashboard
+- 🔄 Worker Auto-Reconnection
+- ⚖️ Dynamic Load Balancing
+- 🌍 Distributed Coordinator Replication
+- 🐳 Docker Containerization
+- ☸️ Kubernetes Deployment
+- 🔌 REST API Gateway
 
 ---
 
 ## 🎯 Project Highlights
 
-* Secure Distributed Job Processing
-* Automatic Worker Failure Recovery
-* Real-Time Performance Monitoring
-* Scalable Multi-Worker Architecture
-* Comprehensive Testing Infrastructure
-* End-to-End SSL/TLS Security
+- Secure distributed job processing
+- Persistent SQLite-backed scheduling
+- Priority-aware execution
+- Automatic worker failure recovery
+- Server restart recovery
+- Concurrent multi-worker architecture
+- Thread-safe job assignment
+- Performance analytics and visualization
+- Scalability validated with **1000 concurrent SSL/TLS connections**
+- Comprehensive automated testing
+
+---
+
+## 👥 Team
+
+- **Aakash Desai**
+- **Aarush Muralidhara**
+- **Abhay DB**
